@@ -16,6 +16,8 @@ class Bio_Link_Admin {
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
 		add_action( 'add_meta_boxes', array( $this, 'add_photo_meta_boxes' ) );
 		add_action( 'save_post_bio_link_photo', array( $this, 'save_photo_meta' ) );
+		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
+		add_action( 'wp_ajax_bio_link_fetch_instagram', array( $this, 'ajax_fetch_instagram' ) );
 	}
 
 	public function add_menu_pages() {
@@ -106,8 +108,12 @@ class Bio_Link_Admin {
 		<table class="form-table">
 			<tr>
 				<th><label for="bio_link_instagram_url"><?php _e( 'Instagram Post URL', 'bio-link' ); ?></label></th>
-				<td><input type="url" id="bio_link_instagram_url" name="bio_link_instagram_url" value="<?php echo esc_url( $instagram_url ); ?>" class="regular-text" />
-				<p class="description"><?php _e( 'Leave empty if using manual image upload only.', 'bio-link' ); ?></p></td>
+				<td>
+					<input type="url" id="bio_link_instagram_url" name="bio_link_instagram_url" value="<?php echo esc_url( $instagram_url ); ?>" class="regular-text" />
+					<button type="button" class="button" id="bio_link_fetch_btn"><?php _e( 'Fetch from Instagram', 'bio-link' ); ?></button>
+					<span id="bio_link_fetch_status" style="margin-left:10px;"></span>
+					<p class="description"><?php _e( 'Paste an Instagram post URL and click Fetch to auto-populate the image.', 'bio-link' ); ?></p>
+				</td>
 			</tr>
 			<tr>
 				<th><label for="bio_link_post_url"><?php _e( 'Post Link', 'bio-link' ); ?></label></th>
@@ -168,5 +174,83 @@ class Bio_Link_Admin {
 				delete_post_meta( $post_id, '_' . $field );
 			}
 		}
+	}
+
+	public function enqueue_admin_assets( $hook ) {
+		if ( 'post.php' !== $hook && 'post-new.php' !== $hook ) {
+			return;
+		}
+		$screen = get_current_screen();
+		if ( ! $screen || 'bio_link_photo' !== $screen->post_type ) {
+			return;
+		}
+		wp_enqueue_script( 'bio-link-admin', BIO_LINK_PLUGIN_URL . 'assets/js/admin.js', array( 'jquery' ), BIO_LINK_VERSION, true );
+		wp_localize_script( 'bio-link-admin', 'bioLinkAdmin', array(
+			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+			'nonce'   => wp_create_nonce( 'bio_link_admin_nonce' ),
+		));
+	}
+
+	public function ajax_fetch_instagram() {
+		check_ajax_referer( 'bio_link_admin_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Unauthorized', 'bio-link' ) ) );
+		}
+
+		$url = isset( $_POST['url'] ) ? esc_url_raw( $_POST['url'] ) : '';
+		if ( empty( $url ) ) {
+			wp_send_json_error( array( 'message' => __( 'No URL provided', 'bio-link' ) ) );
+		}
+
+		$shortcode = $this->extract_shortcode( $url );
+		if ( ! $shortcode ) {
+			wp_send_json_error( array( 'message' => __( 'Invalid Instagram URL', 'bio-link' ) ) );
+		}
+
+		// Try to get image via oEmbed
+		$image_url = $this->get_instagram_image( $shortcode );
+		if ( ! $image_url ) {
+			wp_send_json_error( array( 'message' => __( 'Could not fetch image. Please upload manually.', 'bio-link' ) ) );
+		}
+
+		wp_send_json_success( array(
+			'image_url' => $image_url,
+			'shortcode' => $shortcode,
+		) );
+	}
+
+	private function extract_shortcode( $url ) {
+		if ( preg_match( '/instagram\.com\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/', $url, $m ) ) {
+			return $m[1];
+		}
+		return false;
+	}
+
+	private function get_instagram_image( $shortcode ) {
+		// Try oEmbed
+		$oembed_url = 'https://api.instagram.com/oembed?url=' . urlencode( 'https://www.instagram.com/p/' . $shortcode . '/' );
+		$response   = wp_remote_get( $oembed_url, array( 'timeout' => 15 ) );
+
+		if ( ! is_wp_error( $response ) && 200 === wp_remote_retrieve_response_code( $response ) ) {
+			$body = wp_remote_retrieve_body( $response );
+			$data = json_decode( $body, true );
+			if ( ! empty( $data['thumbnail_url'] ) ) {
+				return $data['thumbnail_url'];
+			}
+		}
+
+		// Fallback: try public media endpoint
+		$media_url = 'https://www.instagram.com/p/' . $shortcode . '/media/?size=l';
+		$response  = wp_remote_head( $media_url, array( 'timeout' => 15, 'redirection' => 0 ) );
+
+		if ( ! is_wp_error( $response ) ) {
+			$location = wp_remote_retrieve_header( $response, 'location' );
+			if ( $location && strpos( $location, 'cdninstagram' ) !== false ) {
+				return $location;
+			}
+		}
+
+		return false;
 	}
 }
