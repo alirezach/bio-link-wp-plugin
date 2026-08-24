@@ -12,6 +12,24 @@ if ( ! defined( 'ABSPATH' ) ) {
 <div class="wrap bio-link-admin">
 	<h1><?php _e( 'Bio Link Dashboard', 'bio-link' ); ?></h1>
 	
+	<!-- Import from Instagram -->
+	<div class="bio-link-import-box" style="background:#fff;border:1px solid #ccd0d4;padding:20px;margin:20px 0;border-radius:4px;">
+		<h2><?php _e( 'Import from Instagram', 'bio-link' ); ?></h2>
+		<table class="form-table">
+			<tr>
+				<th><label for="bio_link_ig_username"><?php _e( 'Instagram Username', 'bio-link' ); ?></label></th>
+				<td>
+					<input type="text" id="bio_link_ig_username" value="<?php echo esc_attr( $ig_username ); ?>" class="regular-text" placeholder="username (without @)" />
+					<button type="button" class="button button-primary" id="bio_link_import_btn"><?php _e( 'Fetch Last 15 Photos', 'bio-link' ); ?></button>
+					<span id="bio_link_import_status" style="margin-left:10px;"></span>
+					<p class="description"><?php _e( 'Enter a public Instagram username and click Fetch to automatically import the last 15 photos.', 'bio-link' ); ?></p>
+				</td>
+			</tr>
+		</table>
+		<div id="bio_link_import_preview" style="margin-top:15px;"></div>
+	</div>
+
+	<!-- Stats -->
 	<div class="bio-link-stats">
 		<div class="bio-link-stat-box">
 			<span class="bio-link-stat-number"><?php echo count( $photos ); ?></span>

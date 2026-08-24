@@ -17,7 +17,7 @@ class Bio_Link_Admin {
 		add_action( 'add_meta_boxes', array( $this, 'add_photo_meta_boxes' ) );
 		add_action( 'save_post_bio_link_photo', array( $this, 'save_photo_meta' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
-		add_action( 'wp_ajax_bio_link_fetch_instagram', array( $this, 'ajax_fetch_instagram' ) );
+		add_action( 'wp_ajax_bio_link_fetch_profile', array( $this, 'ajax_fetch_profile' ) );
 	}
 
 	public function add_menu_pages() {
@@ -65,6 +65,7 @@ class Bio_Link_Admin {
 		register_setting( 'bio_link_settings', 'bio_link_middle_server_url' );
 		register_setting( 'bio_link_settings', 'bio_link_api_key' );
 		register_setting( 'bio_link_settings', 'bio_link_ig_token' );
+		register_setting( 'bio_link_settings', 'bio_link_ig_username' );
 	}
 
 	public function render_dashboard_page() {
@@ -74,6 +75,7 @@ class Bio_Link_Admin {
 			'orderby'        => 'menu_order',
 			'order'          => 'ASC',
 		) );
+		$ig_username = get_option( 'bio_link_ig_username', '' );
 		include BIO_LINK_PLUGIN_DIR . 'templates/admin-dashboard.php';
 	}
 
@@ -110,10 +112,7 @@ class Bio_Link_Admin {
 				<th><label for="bio_link_instagram_url"><?php _e( 'Instagram Post URL', 'bio-link' ); ?></label></th>
 				<td>
 					<input type="url" id="bio_link_instagram_url" name="bio_link_instagram_url" value="<?php echo esc_url( $instagram_url ); ?>" class="regular-text" />
-					<button type="button" class="button" id="bio_link_fetch_btn"><?php _e( 'Fetch from Instagram', 'bio-link' ); ?></button>
-					<span id="bio_link_fetch_status" style="margin-left:10px;"></span>
-					<p class="description"><?php _e( 'Paste an Instagram post URL and click Fetch to auto-populate the image.', 'bio-link' ); ?></p>
-				</td>
+					<p class="description"><?php _e( 'Single post URL. For bulk import, use the Import page.', 'bio-link' ); ?></p></td>
 			</tr>
 			<tr>
 				<th><label for="bio_link_post_url"><?php _e( 'Post Link', 'bio-link' ); ?></label></th>
@@ -177,11 +176,7 @@ class Bio_Link_Admin {
 	}
 
 	public function enqueue_admin_assets( $hook ) {
-		if ( 'post.php' !== $hook && 'post-new.php' !== $hook ) {
-			return;
-		}
-		$screen = get_current_screen();
-		if ( ! $screen || 'bio_link_photo' !== $screen->post_type ) {
+		if ( 'toplevel_page_bio-link' !== $hook && 'bio-link_page_bio-link-settings' !== $hook ) {
 			return;
 		}
 		wp_enqueue_script( 'bio-link-admin', BIO_LINK_PLUGIN_URL . 'assets/js/admin.js', array( 'jquery' ), BIO_LINK_VERSION, true );
@@ -191,66 +186,160 @@ class Bio_Link_Admin {
 		));
 	}
 
-	public function ajax_fetch_instagram() {
+	/**
+	 * AJAX: Fetch last 15 photos from an Instagram profile
+	 */
+	public function ajax_fetch_profile() {
 		check_ajax_referer( 'bio_link_admin_nonce', 'nonce' );
 
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_send_json_error( array( 'message' => __( 'Unauthorized', 'bio-link' ) ) );
 		}
 
-		$url = isset( $_POST['url'] ) ? esc_url_raw( $_POST['url'] ) : '';
-		if ( empty( $url ) ) {
-			wp_send_json_error( array( 'message' => __( 'No URL provided', 'bio-link' ) ) );
+		$username = isset( $_POST['username'] ) ? sanitize_text_field( $_POST['username'] ) : '';
+		if ( empty( $username ) ) {
+			wp_send_json_error( array( 'message' => __( 'No username provided', 'bio-link' ) ) );
 		}
 
-		$shortcode = $this->extract_shortcode( $url );
-		if ( ! $shortcode ) {
-			wp_send_json_error( array( 'message' => __( 'Invalid Instagram URL', 'bio-link' ) ) );
+		// Strip @ if present
+		$username = ltrim( $username, '@' );
+
+		$photos = $this->fetch_instagram_profile_photos( $username, 15 );
+
+		if ( empty( $photos ) ) {
+			wp_send_json_error( array( 'message' => __( 'Could not fetch photos. Make sure the profile is public.', 'bio-link' ) ) );
 		}
 
-		// Try to get image via oEmbed
-		$image_url = $this->get_instagram_image( $shortcode );
-		if ( ! $image_url ) {
-			wp_send_json_error( array( 'message' => __( 'Could not fetch image. Please upload manually.', 'bio-link' ) ) );
+		// Save username
+		update_option( 'bio_link_ig_username', $username );
+
+		// Auto-create photo posts
+		$imported = 0;
+		$skipped  = 0;
+		foreach ( $photos as $photo ) {
+			// Check if already exists by Instagram URL
+			$existing = get_posts( array(
+				'post_type'  => 'bio_link_photo',
+				'meta_key'   => '_bio_link_instagram_url',
+				'meta_value' => $photo['url'],
+				'numberposts' => 1,
+			) );
+
+			if ( ! empty( $existing ) ) {
+				$skipped++;
+				continue;
+			}
+
+			$post_id = wp_insert_post( array(
+				'post_title'  => $photo['caption'] ? $photo['caption'] : $photo['shortcode'],
+				'post_type'   => 'bio_link_photo',
+				'post_status' => 'publish',
+				'menu_order'  => $imported,
+			) );
+
+			if ( $post_id && ! is_wp_error( $post_id ) ) {
+				update_post_meta( $post_id, '_bio_link_instagram_url', $photo['url'] );
+				update_post_meta( $post_id, '_bio_link_image_url', $photo['image_url'] );
+				$imported++;
+			}
 		}
 
 		wp_send_json_success( array(
-			'image_url' => $image_url,
-			'shortcode' => $shortcode,
+			'message'  => sprintf( __( 'Imported %d photos, %d already existed.', 'bio-link' ), $imported, $skipped ),
+			'imported' => $imported,
+			'skipped'  => $skipped,
+			'photos'   => $photos,
 		) );
 	}
 
-	private function extract_shortcode( $url ) {
-		if ( preg_match( '/instagram\.com\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/', $url, $m ) ) {
-			return $m[1];
-		}
-		return false;
-	}
+	/**
+	 * Fetch last N photos from an Instagram public profile
+	 */
+	private function fetch_instagram_profile_photos( $username, $count = 15 ) {
+		$photos = array();
 
-	private function get_instagram_image( $shortcode ) {
-		// Try oEmbed
-		$oembed_url = 'https://api.instagram.com/oembed?url=' . urlencode( 'https://www.instagram.com/p/' . $shortcode . '/' );
-		$response   = wp_remote_get( $oembed_url, array( 'timeout' => 15 ) );
+		// Strategy 1: Public profile page scrape
+		$profile_url = 'https://www.instagram.com/' . $username . '/';
+		$response   = wp_remote_get( $profile_url, array(
+			'timeout'  => 30,
+			'headers'  => array(
+				'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+				'Accept'     => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+			),
+		) );
 
 		if ( ! is_wp_error( $response ) && 200 === wp_remote_retrieve_response_code( $response ) ) {
-			$body = wp_remote_retrieve_body( $response );
-			$data = json_decode( $body, true );
-			if ( ! empty( $data['thumbnail_url'] ) ) {
-				return $data['thumbnail_url'];
+			$html = wp_remote_retrieve_body( $response );
+
+			// Try to find sharedData JSON
+			if ( preg_match( '/window\._sharedData\s*=\s*(\{.+?\});<\/script>/s', $html, $matches ) ) {
+				$data = json_decode( $matches[1], true );
+				if ( ! empty( $data['entry_data']['ProfilePage'][0]['graphql']['user']['edge_owner_to_timeline_media']['edges'] ) ) {
+					$edges = $data['entry_data']['ProfilePage'][0]['graphql']['user']['edge_owner_to_timeline_media']['edges'];
+					foreach ( $edges as $i => $edge ) {
+						if ( $i >= $count ) break;
+						$node = $edge['node'];
+						$photos[] = array(
+							'shortcode' => $node['shortcode'],
+							'url'       => 'https://www.instagram.com/p/' . $node['shortcode'] . '/',
+							'image_url' => $node['display_url'],
+							'thumbnail' => $node['thumbnail_src'],
+							'caption'   => ! empty( $node['edge_media_to_caption']['edges'][0]['node']['text'] ) ? $node['edge_media_to_caption']['edges'][0]['node']['text'] : '',
+						);
+					}
+				}
+			}
+
+			// Strategy 2: Look for og:image meta tags (gives only the most recent)
+			if ( empty( $photos ) ) {
+				if ( preg_match_all( '/<meta\s+property="og:image"\s+content="([^"]+)"/', $html, $meta_matches ) ) {
+					foreach ( $meta_matches[1] as $i => $img_url ) {
+						if ( $i >= $count ) break;
+						$shortcode = 'imported_' . $i . '_' . time();
+						$photos[] = array(
+							'shortcode' => $shortcode,
+							'url'       => $profile_url,
+							'image_url' => $img_url,
+							'thumbnail' => $img_url,
+							'caption'   => '',
+						);
+					}
+				}
 			}
 		}
 
-		// Fallback: try public media endpoint
-		$media_url = 'https://www.instagram.com/p/' . $shortcode . '/media/?size=l';
-		$response  = wp_remote_head( $media_url, array( 'timeout' => 15, 'redirection' => 0 ) );
+		// Strategy 3: Try the public API endpoint (sometimes works)
+		if ( empty( $photos ) ) {
+			$api_url  = 'https://www.instagram.com/api/v1/users/web_profile_info/?username=' . $username;
+			$response = wp_remote_get( $api_url, array(
+				'timeout' => 30,
+				'headers' => array(
+					'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+					'Accept'     => '*/*',
+					'X-IG-App-ID' => '936619743392459',
+				),
+			) );
 
-		if ( ! is_wp_error( $response ) ) {
-			$location = wp_remote_retrieve_header( $response, 'location' );
-			if ( $location && strpos( $location, 'cdninstagram' ) !== false ) {
-				return $location;
+			if ( ! is_wp_error( $response ) && 200 === wp_remote_retrieve_response_code( $response ) ) {
+				$body = wp_remote_retrieve_body( $response );
+				$data = json_decode( $body, true );
+				if ( ! empty( $data['data']['user']['edge_owner_to_timeline_media']['edges'] ) ) {
+					$edges = $data['data']['user']['edge_owner_to_timeline_media']['edges'];
+					foreach ( $edges as $i => $edge ) {
+						if ( $i >= $count ) break;
+						$node = $edge['node'];
+						$photos[] = array(
+							'shortcode' => $node['shortcode'],
+							'url'       => 'https://www.instagram.com/p/' . $node['shortcode'] . '/',
+							'image_url' => $node['display_url'],
+							'thumbnail' => $node['thumbnail_src'],
+							'caption'   => ! empty( $node['edge_media_to_caption']['edges'][0]['node']['text'] ) ? $node['edge_media_to_caption']['edges'][0]['node']['text'] : '',
+						);
+					}
+				}
 			}
 		}
 
-		return false;
+		return $photos;
 	}
 }
