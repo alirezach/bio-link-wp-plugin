@@ -17,6 +17,7 @@ class Bio_Link_Admin {
 		add_action( 'add_meta_boxes', array( $this, 'add_photo_meta_boxes' ) );
 		add_action( 'save_post_bio_link_photo', array( $this, 'save_photo_meta' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
+		add_action( 'updated_option', array( $this, 'save_settings_callback' ), 10, 3 );
 		add_action( 'wp_ajax_bio_link_fetch_profile', array( $this, 'ajax_fetch_profile' ) );
 		add_action( 'wp_ajax_bio_link_fetch_single', array( $this, 'ajax_fetch_single' ) );
 		add_action( 'wp_ajax_bio_link_check_server', array( $this, 'ajax_check_server' ) );
@@ -47,11 +48,10 @@ class Bio_Link_Admin {
 
 		add_submenu_page(
 			'bio-link',
-			__( 'Add New', 'bio-link' ),
+			__( 'Add New Photo', 'bio-link' ),
 			__( 'Add New', 'bio-link' ),
 			'manage_options',
-			'post-new.php?post_type=bio_link_photo',
-			array( $this, 'render_add_new_page' )
+			'post-new.php?post_type=bio_link_photo'
 		);
 
 		add_submenu_page(
@@ -92,6 +92,54 @@ class Bio_Link_Admin {
 		register_setting( 'bio_link_settings', 'bio_link_debug_enabled' );
 	}
 
+	public function save_settings_callback( $option, $old_value, $new_value ) {
+		$watch = array( 'bio_link_middle_server_url', 'bio_link_api_key' );
+		if ( ! in_array( $option, $watch, true ) ) {
+			return;
+		}
+
+		$server_url = get_option( 'bio_link_middle_server_url', '' );
+		$api_key    = get_option( 'bio_link_api_key', '' );
+
+		if ( ! empty( $server_url ) && ! empty( $api_key ) ) {
+			$this->register_with_middle_server( $server_url, $api_key );
+		}
+	}
+
+	private function register_with_middle_server( $server_url, $api_key ) {
+		add_action( 'shutdown', function() use ( $server_url, $api_key ) {
+			$site_id = md5( home_url() );
+			$url = untrailingslashit( $server_url ) . '/api/v1/register-site';
+
+			Bio_Link_Logger::log( 'info', "Registering site with middle server: {$url}" );
+
+			$response = wp_remote_post( $url, array(
+				'timeout' => 15,
+				'headers' => array(
+					'Content-Type' => 'application/json',
+				),
+				'body' => json_encode( array(
+					'site_id' => $site_id,
+					'api_key' => $api_key,
+				) ),
+			) );
+
+			if ( is_wp_error( $response ) ) {
+				Bio_Link_Logger::log( 'error', 'Registration failed: ' . $response->get_error_message() );
+				return;
+			}
+
+			$code = wp_remote_retrieve_response_code( $response );
+			$body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+			if ( $code === 200 && ! empty( $body['ok'] ) ) {
+				Bio_Link_Logger::log( 'info', '✓ Site registered with middle server' );
+			} else {
+				Bio_Link_Logger::log( 'error', "Registration failed: HTTP {$code} - " . ( $body['error'] ?? 'unknown' ) );
+			}
+		} );
+	}
+
 	public function render_dashboard_page() {
 		$photos = get_posts( array(
 			'post_type'      => 'bio_link_photo',
@@ -99,24 +147,21 @@ class Bio_Link_Admin {
 			'orderby'        => 'menu_order',
 			'order'          => 'ASC',
 		) );
-		$ig_username = get_option( 'bio_link_ig_username', '' );
-		$server_url = get_option( 'bio_link_middle_server_url', '' );
-		$api_key = get_option( 'bio_link_api_key', '' );
-		$configured = ! empty( $server_url );
+		$ig_username  = get_option( 'bio_link_ig_username', '' );
+		$server_url   = get_option( 'bio_link_middle_server_url', '' );
+		$api_key      = get_option( 'bio_link_api_key', '' );
+		$configured   = ! empty( $server_url );
 		include BIO_LINK_PLUGIN_DIR . 'templates/admin-dashboard.php';
 	}
 
 	public function render_add_new_page() {
-		$api_key = get_option( 'bio_link_api_key', '' );
-		$server_url = get_option( 'bio_link_middle_server_url', '' );
-		$ig_token = get_option( 'bio_link_ig_token', '' );
 		include BIO_LINK_PLUGIN_DIR . 'templates/admin-add-new.php';
 	}
 
 	public function render_settings_page() {
-		$api_key = get_option( 'bio_link_api_key', '' );
+		$api_key   = get_option( 'bio_link_api_key', '' );
 		$server_url = get_option( 'bio_link_middle_server_url', '' );
-		$ig_token = get_option( 'bio_link_ig_token', '' );
+		$ig_token  = get_option( 'bio_link_ig_token', '' );
 		include BIO_LINK_PLUGIN_DIR . 'templates/admin-settings.php';
 	}
 
@@ -228,6 +273,7 @@ class Bio_Link_Admin {
 		wp_localize_script( 'bio-link-admin', 'bioLinkAdmin', array(
 			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
 			'nonce'   => wp_create_nonce( 'bio_link_admin_nonce' ),
+			'serverUrl' => get_option( 'bio_link_middle_server_url', '' ),
 			'i18n'    => array(
 				'fetching'      => __( 'Fetching...', 'bio-link' ),
 				'fetch_failed'    => __( 'Fetch failed. Check connection.', 'bio-link' ),
@@ -293,18 +339,14 @@ class Bio_Link_Admin {
 
 			if ( $post_id && ! is_wp_error( $post_id ) ) {
 				if ( function_exists( 'wp_generate_attachment_metadata' ) ) {
-					// Try to set featured image from remote URL
 					$image_url = $photo['image_url'];
 					if ( $image_url ) {
-						$data = wp_remote_get( $image_url, array( 'timeout' => 30 ) );
-						if ( ! is_wp_error( $data ) && 200 === wp_remote_retrieve_response_code( $data ) ) {
-							$tmp = download_url( $image_url );
-							if ( ! is_wp_error( $tmp ) ) {
-								$file_array = array( 'name' => basename( $image_url ), 'tmp_name' => $tmp );
-								$attach_id = media_handle_sideload( $file_array, $post_id );
-								if ( ! is_wp_error( $attach_id ) ) {
-									set_post_thumbnail( $post_id, $attach_id );
-								}
+						$tmp = download_url( $image_url );
+						if ( ! is_wp_error( $tmp ) ) {
+							$file_array = array( 'name' => basename( parse_url( $image_url, PHP_URL_PATH ) ), 'tmp_name' => $tmp );
+							$attach_id = media_handle_sideload( $file_array, $post_id );
+							if ( ! is_wp_error( $attach_id ) ) {
+								set_post_thumbnail( $post_id, $attach_id );
 							}
 						}
 					}
@@ -357,11 +399,10 @@ class Bio_Link_Admin {
 			wp_send_json_error( array( 'message' => 'Could not fetch image. Check Debug Log.' ) );
 		}
 
-		// Set as featured image
 		if ( $post_id ) {
 			$tmp = download_url( $image_url );
 			if ( ! is_wp_error( $tmp ) ) {
-				$file_array = array( 'name' => basename( $image_url ), 'tmp_name' => $tmp );
+				$file_array = array( 'name' => basename( parse_url( $image_url, PHP_URL_PATH ) ), 'tmp_name' => $tmp );
 				$attach_id = media_handle_sideload( $file_array, $post_id );
 				if ( ! is_wp_error( $attach_id ) ) {
 					set_post_thumbnail( $post_id, $attach_id );
@@ -453,7 +494,7 @@ class Bio_Link_Admin {
 		}
 
 		$server_url = isset( $_POST['url'] ) ? esc_url_raw( $_POST['url'] ) : get_option( 'bio_link_middle_server_url', '' );
-		$api_key = isset( $_POST['key'] ) ? sanitize_text_field( $_POST['key'] ) : get_option( 'bio_link_api_key', '' );
+		$api_key = get_option( 'bio_link_api_key', '' );
 
 		Bio_Link_Logger::log( 'info', "Checking connection to middle server: {$server_url}" );
 
@@ -464,10 +505,6 @@ class Bio_Link_Admin {
 		$health_url = untrailingslashit( $server_url ) . '/api/v1/health';
 		$response = wp_remote_get( $health_url, array(
 			'timeout' => 10,
-			'headers' => array(
-				'X-BioLink-Site' => md5( home_url() ),
-				'X-BioLink-Key'  => $api_key,
-			),
 		) );
 
 		if ( is_wp_error( $response ) ) {
@@ -478,7 +515,7 @@ class Bio_Link_Admin {
 		$code = wp_remote_retrieve_response_code( $response );
 		if ( 200 === $code ) {
 			$body = json_decode( wp_remote_retrieve_body( $response ), true );
-			Bio_Link_Logger::log( 'info', "Server check OK: " . ( $body['version'] ?? 'unknown' ) );
+			Bio_Link_Logger::log( 'info', 'Server check OK: ' . ( $body['version'] ?? 'unknown' ) );
 			wp_send_json_success( array( 'message' => 'Connected!', 'version' => $body['version'] ?? 'unknown' ) );
 		}
 
@@ -500,7 +537,6 @@ class Bio_Link_Admin {
 			wp_send_json_error( array( 'message' => 'No token provided' ) );
 		}
 
-		// Test with /me?fields=id endpoint
 		$response = wp_remote_get( 'https://graph.facebook.com/v18.0/me?fields=id,name&access_token=' . $token, array(
 			'timeout' => 15,
 		) );
@@ -514,7 +550,7 @@ class Bio_Link_Admin {
 		$body = json_decode( wp_remote_retrieve_body( $response ), true );
 
 		if ( $code === 200 && ! empty( $body['id'] ) ) {
-			Bio_Link_Logger::log( 'info', "Graph API token valid: " . $body['name'] );
+			Bio_Link_Logger::log( 'info', 'Graph API token valid: ' . ( $body['name'] ?? 'Unknown' ) );
 			wp_send_json_success( array( 'message' => 'Valid! Account: ' . ( $body['name'] ?? 'Unknown' ) ) );
 		}
 
@@ -553,8 +589,8 @@ class Bio_Link_Admin {
 
 	private function fetch_instagram_direct( $username, $count = 15 ) {
 		$photos = array();
-
 		$profile_url = 'https://www.instagram.com/' . $username . '/';
+
 		Bio_Link_Logger::log( 'info', "Fetching profile page: {$profile_url}" );
 
 		$response = wp_remote_get( $profile_url, array(
@@ -659,58 +695,50 @@ class Bio_Link_Admin {
 
 	public function add_help_tab() {
 		$screen = get_current_screen();
-		if ( ! $screen || strpos( $screen->id, 'bio-link' ) === false ) {
+		if ( ! $screen ) {
 			return;
 		}
 
-		$screen->add_help_tab( array(
-			'id'      => 'bio_link_help',
-			'title'   => __( 'Getting Started', 'bio-link' ),
-			'callback' => array( $this, 'render_help_tab' ),
-		) );
+		if ( strpos( $screen->id, 'bio-link' ) !== false || $screen->post_type === 'bio_link_photo' ) {
+			$screen->add_help_tab( array(
+				'id'      => 'bio_link_help',
+				'title'   => __( 'Getting Started', 'bio-link' ),
+				'callback' => array( $this, 'render_help_tab' ),
+			) );
 
-		$screen->add_help_tab( array(
-			'id'      => 'bio_link_graph_api',
-			'title'   => __( 'Instagram Graph API', 'bio-link' ),
-			'callback' => array( $this, 'render_graph_api_help_tab' ),
-		) );
+			$screen->add_help_tab( array(
+				'id'      => 'bio_link_graph_api',
+				'title'   => __( 'Instagram Graph API', 'bio-link' ),
+				'callback' => array( $this, 'render_graph_api_help_tab' ),
+			) );
+		}
 	}
 
 	public function render_help_tab() {
 		?>
 		<h2><?php _e( 'Bio Link — Getting Started', 'bio-link' ); ?></h2>
 		<ol>
-			<li><?php _e( 'Deploy the middle server on Cloudflare Worker (see middle server repo).', 'bio-link' ); ?></li>
-			<li><?php _e( 'Go to <strong>Settings</strong> → enter Middle Server URL and API key.', 'bio-link' ); ?></li>
-			<li><?php _e( 'Click <strong>Check Connection</strong> to verify.', 'bio-link' ); ?></li>
-			<li><?php _e( 'Go to <strong>Dashboard</strong> → enter Instagram username → <strong>Fetch Last 15 Photos</strong>.', 'bio-link' ); ?></li>
-			<li><?php _e( 'Photos are imported automatically with images.', 'bio-link' ); ?></li>
-			<li><?php _e( 'Place <code>[bio_link]</code> shortcode on any page.', 'bio-link' ); ?></li>
+			<li><?php _e( 'Deploy the middle server on Cloudflare Worker', 'bio-link' ); ?></li>
+			<li><?php _e( 'Go to Settings → enter Middle Server URL + save', 'bio-link' ); ?></li>
+			<li><?php _e( 'API Key auto-generates → auto-registers with your Worker', 'bio-link' ); ?></li>
+			<li><?php _e( 'Dashboard → username → Fetch Last 15 Photos', 'bio-link' ); ?></li>
+			<li><?php _e( 'Place [bio_link] shortcode on any page', 'bio-link' ); ?></li>
 		</ol>
 		<?php
 	}
 
 	public function render_graph_api_help_tab() {
 		?>
-		<h2><?php _e( 'Instagram Graph API Setup', 'bio-link' ); ?> <a href="https://developers.facebook.com/docs/instagram-api" target="_blank">ℹ️</a></h2>
-
-		<p><?php _e( 'To use DM automation, you need an Instagram Graph API token.', 'bio-link' ); ?></p>
-
+		<h2><?php _e( 'Instagram Graph API Setup', 'bio-link' ); ?></h2>
+		<p><?php _e( 'For DM automation you need an Instagram Graph API token:', 'bio-link' ); ?></p>
 		<ol>
-			<li><?php _e( '<strong>Create a Facebook App:</strong> Go to', 'bio-link' ); ?> <a href="https://developers.facebook.com/apps/" target="_blank">developers.facebook.com/apps</a> → <strong>Create App</strong> → Select **Business** → Enter name and email.</li>
-			<li><?php _e( '<strong>Add Instagram Graph API product:</strong> In your app dashboard → <strong>Add Product</strong> → Find "Instagram" → Click <strong>Set Up</strong>.', 'bio-link' ); ?></li>
-			<li><?php _e( '<strong>Add permissions:</strong> Go to <strong>App Review</strong> → <strong>Requested Permissions</strong> and add:', 'bio-link' ); ?>
-				<ul>
-					<li><code>instagram_basic</code></li>
-					<li><code>instagram_messaging</code></li>
-					<li><code>pages_messaging</code></li>
-				</ul>
-			</li>
-			<li><?php _e( '<strong>Generate token:</strong> Use the <a href="https://developers.facebook.com/tools/explorer/" target="_blank">Graph API Explorer</a> → Select your app → Add permissions → Click <strong>Generate Access Token</strong>.', 'bio-link' ); ?></li>
-			<li><?php _e( '<strong>Paste token:</strong> Go to Bio Link → Settings → paste in <strong>Instagram Token</strong> → Click <strong>Check Connection</strong>.', 'bio-link' ); ?></li>
+			<li><?php _e( 'Create a Facebook App at', 'bio-link' ); ?> <a href="https://developers.facebook.com/apps/" target="_blank">developers.facebook.com/apps</a></li>
+			<li><?php _e( 'Add Instagram Graph API product', 'bio-link' ); ?></li>
+			<li><?php _e( 'Permissions needed: instagram_basic, instagram_messaging, pages_messaging', 'bio-link' ); ?></li>
+			<li><?php _e( 'Generate token at', 'bio-link' ); ?> <a href="https://developers.facebook.com/tools/explorer/" target="_blank">Graph API Explorer</a></li>
+			<li><?php _e( 'Paste in Settings → Instagram Token', 'bio-link' ); ?></li>
 		</ol>
-
-		<p><a href="https://developers.facebook.com/docs/instagram-api/guides/creating-content" target="_blank" class="button"><?php _e( 'Official Docs', 'bio-link' ); ?></a></p>
+		<p><a href="https://developers.facebook.com/docs/instagram-api/" target="_blank" class="button"><?php _e( 'Official Docs', 'bio-link' ); ?></a></p>
 		<?php
 	}
 }
