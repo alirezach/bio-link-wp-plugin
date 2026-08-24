@@ -19,10 +19,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 			<tr>
 				<th><label for="bio_link_ig_username"><?php _e( 'Instagram Username', 'bio-link' ); ?></label></th>
 				<td>
-					<input type="text" id="bio_link_ig_username" value="<?php echo esc_attr( $ig_username ); ?>" class="regular-text" placeholder="username (without @)" />
+					<input type="text" id="bio_link_ig_username" class="regular-text" placeholder="username (without @)" value="<?php echo esc_attr( $ig_username ); ?>" />
 					<button type="button" class="button button-primary" id="bio_link_import_btn"><?php _e( 'Fetch Last 15 Photos', 'bio-link' ); ?></button>
 					<span id="bio_link_import_status" style="margin-left:10px;"></span>
-					<p class="description"><?php _e( 'Enter a public Instagram username and click Fetch to automatically import the last 15 photos.', 'bio-link' ); ?></p>
+					<p class="description"><?php _e( 'Enter a public Instagram username. The plugin will auto-import the last 15 photos.', 'bio-link' ); ?></p>
 				</td>
 			</tr>
 			<tr>
@@ -30,12 +30,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 				<td>
 					<label>
 						<input type="checkbox" id="bio_link_use_middle" <?php echo $configured ? 'checked' : ''; ?> />
-						<?php _e( 'Use Middle Server (recommended if your host blocks Instagram)', 'bio-link' ); ?>
+						<?php _e( 'Use Middle Server (proxy requests to bypass host blocks)', 'bio-link' ); ?>
 					</label>
 					<?php if ( ! $configured ) : ?>
-						<p class="description" style="color:#dba617;">
-							<?php _e( '⚠️ Middle server not configured. Go to Settings to set it up, or import will fail.', 'bio-link' ); ?>
-						</p>
+						<p class="description" style="color:#dba617;">⚠️ Middle server not configured. Go to Settings.</p>
 					<?php endif; ?>
 				</td>
 			</tr>
@@ -52,29 +50,40 @@ if ( ! defined( 'ABSPATH' ) ) {
 	</div>
 
 	<h2><?php _e( 'Photos', 'bio-link' ); ?></h2>
+	<p>
+		<a href="<?php echo admin_url( 'post-new.php?post_type=bio_link_photo' ); ?>" class="button button-primary"><?php _e( 'Add New Photo', 'bio-link' ); ?></a>
+	</p>
+
+	<?php if ( $photos ) : ?>
 	<table class="wp-list-table widefat fixed striped">
 		<thead>
 			<tr>
 				<th><?php _e( 'Photo', 'bio-link' ); ?></th>
-				<th><?php _e( 'Title', 'bio-link' ); ?></th>
-				<th><?php _e( 'Has Link', 'bio-link' ); ?></th>
+				<th><?php _e( 'Link', 'bio-link' ); ?></th>
 				<th><?php _e( 'DM Keyword', 'bio-link' ); ?></th>
+				<th><?php _e( 'Actions', 'bio-link' ); ?></th>
 			</tr>
 		</thead>
 		<tbody>
 			<?php foreach ( $photos as $photo ) : 
 				$post_url = get_post_meta( $photo->ID, '_bio_link_post_url', true );
 				$keyword  = get_post_meta( $photo->ID, '_bio_link_keyword', true );
+				$img      = get_the_post_thumbnail( $photo->ID, 'thumbnail' );
+				if ( ! $img ) {
+					$img_url = get_post_meta( $photo->ID, '_bio_link_image_url', true );
+					$img = $img_url ? '<img src="' . esc_url( $img_url ) . '" style="max-height:50px;" />' : '—';
+				}
 			?>
 				<tr>
-					<td><?php echo get_the_post_thumbnail( $photo->ID, 'thumbnail' ); ?></td>
-					<td><strong><?php echo esc_html( $photo->post_title ); ?></strong></td>
+					<td><?php echo $img; ?></td>
 					<td><?php echo $post_url ? '✅' : '⚫'; ?></td>
 					<td><?php echo $keyword ? esc_html( $keyword ) : '—'; ?></td>
+					<td><a href="<?php echo get_edit_post_link( $photo->ID ); ?>"><?php _e( 'Edit', 'bio-link' ); ?></a></td>
 				</tr>
 			<?php endforeach; ?>
 		</tbody>
 	</table>
-
-	<p><a href="<?php echo admin_url( 'post-new.php?post_type=bio_link_photo' ); ?>" class="button button-primary"><?php _e( 'Add New Photo', 'bio-link' ); ?></a></p>
+	<?php else : ?>
+		<p><?php _e( 'No photos imported yet. Use the form above to get started.', 'bio-link' ); ?></p>
+	<?php endif; ?>
 </div>
