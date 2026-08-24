@@ -19,6 +19,7 @@ class Bio_Link_Admin {
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
 		add_action( 'wp_ajax_bio_link_fetch_profile', array( $this, 'ajax_fetch_profile' ) );
 		add_action( 'wp_ajax_bio_link_regenerate_api_key', array( $this, 'ajax_regenerate_api_key' ) );
+		add_action( 'wp_ajax_bio_link_clear_log', array( $this, 'ajax_clear_log' ) );
 		add_action( 'admin_head', array( $this, 'add_help_tab' ) );
 	}
 
@@ -94,8 +95,8 @@ class Bio_Link_Admin {
 			'order'          => 'ASC',
 		) );
 		$ig_username = get_option( 'bio_link_ig_username', '' );
-		$api_key = get_option( 'bio_link_api_key', '' );
 		$server_url = get_option( 'bio_link_middle_server_url', '' );
+		$configured = ! empty( $server_url );
 		include BIO_LINK_PLUGIN_DIR . 'templates/admin-dashboard.php';
 	}
 
@@ -140,7 +141,7 @@ class Bio_Link_Admin {
 				<th><label for="bio_link_instagram_url"><?php _e( 'Instagram Post URL', 'bio-link' ); ?></label></th>
 				<td>
 					<input type="url" id="bio_link_instagram_url" name="bio_link_instagram_url" value="<?php echo esc_url( $instagram_url ); ?>" class="regular-text" />
-					<p class="description"><?php _e( 'Single post URL. For bulk import, use the Import page.', 'bio-link' ); ?></p></td>
+					<p class="description"><?php _e( 'Single post URL. For bulk import, use the Import on Dashboard.', 'bio-link' ); ?></p></td>
 			</tr>
 			<tr>
 				<th><label for="bio_link_post_url"><?php _e( 'Post Link', 'bio-link' ); ?></label></th>
@@ -224,6 +225,16 @@ class Bio_Link_Admin {
 		wp_send_json_success( array( 'key' => $key ) );
 	}
 
+	public function ajax_clear_log() {
+		check_ajax_referer( 'bio_link_admin_nonce', 'nonce' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( 'Unauthorized' );
+		}
+		delete_option( 'bio_link_debug_log' );
+		wp_redirect( admin_url( 'admin.php?page=bio-link-debug' ) );
+		exit;
+	}
+
 	public function ajax_fetch_profile() {
 		check_ajax_referer( 'bio_link_admin_nonce', 'nonce' );
 
@@ -232,6 +243,9 @@ class Bio_Link_Admin {
 		}
 
 		$username = isset( $_POST['username'] ) ? sanitize_text_field( $_POST['username'] ) : '';
+		$use_middle = isset( $_POST['use_middle'] ) ? true : false;
+		$server_url = get_option( 'bio_link_middle_server_url', '' );
+
 		if ( empty( $username ) ) {
 			wp_send_json_error( array( 'message' => __( 'No username provided', 'bio-link' ) ) );
 		}
@@ -239,11 +253,17 @@ class Bio_Link_Admin {
 		$username = ltrim( $username, '@' );
 		$this->log( "Starting fetch for @{$username}" );
 
-		$photos = $this->fetch_instagram_profile_photos( $username, 15 );
+		if ( $use_middle && ! empty( $server_url ) ) {
+			// Fetch via middle server (Cloudflare Worker)
+			$photos = $this->fetch_via_middle_server( $username, $server_url, 15 );
+		} else {
+			// Direct fetch (will fail if host blocks Instagram)
+			$photos = $this->fetch_instagram_profile_photos( $username, 15 );
+		}
 
 		if ( empty( $photos ) ) {
 			$this->log( "Fetch FAILED for @{$username} - no photos found", 'error' );
-			wp_send_json_error( array( 'message' => __( 'Could not fetch photos. Make sure the profile is public.', 'bio-link' ) ) );
+			wp_send_json_error( array( 'message' => __( 'Could not fetch photos. Make sure the profile is public or use Middle Server.', 'bio-link' ) ) );
 		}
 
 		update_option( 'bio_link_ig_username', $username );
@@ -285,6 +305,62 @@ class Bio_Link_Admin {
 			'skipped'  => $skipped,
 			'photos'   => $photos,
 		) );
+	}
+
+	private function fetch_via_middle_server( $username, $server_url, $count = 15 ) {
+		$base = untrailingslashit( $server_url );
+		$url  = add_query_arg( array(
+			'username' => $username,
+			'count'    => $count,
+		), $base . '/api/v1/fetch-profile' );
+
+		$this->log( "Fetching via middle server: {$url}" );
+
+		$api_key = get_option( 'bio_link_api_key', '' );
+		$response = wp_remote_get( $url, array(
+			'timeout' => 60,
+			'headers' => array(
+				'X-BioLink-Site' => md5( home_url() ),
+				'X-BioLink-Key'  => $api_key,
+			),
+		) );
+
+		if ( is_wp_error( $response ) ) {
+			$this->log( "Middle server error: " . $response->get_error_message(), 'error' );
+			return array();
+		}
+
+		$http_code = wp_remote_retrieve_response_code( $response );
+		$this->log( "Middle server HTTP: {$http_code}" );
+
+		if ( 200 !== $http_code ) {
+			$body = wp_remote_retrieve_body( $response );
+			$json = json_decode( $body, true );
+			$msg  = ! empty( $json['error'] ) ? $json['error'] : $body;
+			$this->log( "Middle server error: {$msg}", 'error' );
+			return array();
+		}
+
+		$body = wp_remote_retrieve_body( $response );
+		$data = json_decode( $body, true );
+
+		if ( empty( $data['photos'] ) ) {
+			return array();
+		}
+
+		$photos = array();
+		foreach ( $data['photos'] as $p ) {
+			$photos[] = array(
+				'shortcode' => $p['shortcode'],
+				'url'       => 'https://www.instagram.com/p/' . $p['shortcode'] . '/',
+				'image_url' => $p['image_url'],
+				'thumbnail' => $p['thumbnail'],
+				'caption'   => $p['caption'],
+			);
+		}
+
+		$this->log( "Middle server returned " . count( $photos ) . " photos" );
+		return $photos;
 	}
 
 	private function fetch_instagram_profile_photos( $username, $count = 15 ) {
@@ -396,12 +472,13 @@ class Bio_Link_Admin {
 		?>
 		<h2><?php _e( 'Bio Link — Getting Started', 'bio-link' ); ?></h2>
 		<ol>
-			<li><?php _e( 'Go to <strong>Settings</strong> and enter your Instagram username.', 'bio-link' ); ?></li>
-			<li><?php _e( 'Go to <strong>Dashboard</strong> → enter username → click <strong>Fetch Last 15 Photos</strong>.', 'bio-link' ); ?></li>
+			<li><?php _e( 'Deploy the middle server on Cloudflare Worker (see middle server repo).', 'bio-link' ); ?></li>
+			<li><?php _e( 'Go to <strong>Settings</strong> → enter Middle Server URL and save.', 'bio-link' ); ?></li>
+			<li><?php _e( 'Copy the auto-generated <strong>API Key</strong> to your Worker config.', 'bio-link' ); ?></li>
+			<li><?php _e( 'Go to <strong>Dashboard</strong> → enter Instagram username → <strong>Fetch Last 15 Photos</strong>.', 'bio-link' ); ?></li>
 			<li><?php _e( 'Photos are imported. Set links per photo to make them colored.', 'bio-link' ); ?></li>
 			<li><?php _e( 'Place <code>[bio_link]</code> shortcode on any page.', 'bio-link' ); ?></li>
 		</ol>
-		<p><?php _e( 'For DM automation, you need Instagram Graph API access.', 'bio-link' ); ?></p>
 		<?php
 	}
 

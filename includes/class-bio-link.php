@@ -76,7 +76,7 @@ class Bio_Link {
 				),
 				'public'       => false,
 				'show_ui'      => true,
-				'show_in_menu' => 'bio-link',
+				'show_in_menu' => false, // We add submenus manually to avoid conflicts
 				'supports'     => array( 'title', 'thumbnail', 'custom-fields' ),
 				'rewrite'      => false,
 				'show_in_rest' => true,

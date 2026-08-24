@@ -25,6 +25,20 @@ if ( ! defined( 'ABSPATH' ) ) {
 					<p class="description"><?php _e( 'Enter a public Instagram username and click Fetch to automatically import the last 15 photos.', 'bio-link' ); ?></p>
 				</td>
 			</tr>
+			<tr>
+				<th><?php _e( 'Options', 'bio-link' ); ?></th>
+				<td>
+					<label>
+						<input type="checkbox" id="bio_link_use_middle" <?php echo $configured ? 'checked' : ''; ?> />
+						<?php _e( 'Use Middle Server (recommended if your host blocks Instagram)', 'bio-link' ); ?>
+					</label>
+					<?php if ( ! $configured ) : ?>
+						<p class="description" style="color:#dba617;">
+							<?php _e( '⚠️ Middle server not configured. Go to Settings to set it up, or import will fail.', 'bio-link' ); ?>
+						</p>
+					<?php endif; ?>
+				</td>
+			</tr>
 		</table>
 		<div id="bio_link_import_preview" style="margin-top:15px;"></div>
 	</div>
