@@ -50,6 +50,26 @@
 				$status.text('✗ Request failed');
 			});
 		});
+
+		// Regenerate API key
+		$('#bio_link_regenerate_key').on('click', function(e) {
+			e.preventDefault();
+			if (!confirm('Are you sure? You will need to update the key on your middle server.')) {
+				return;
+			}
+			var $btn = $(this);
+			$btn.prop('disabled', true);
+			$.post(bioLinkAdmin.ajaxUrl, {
+				action: 'bio_link_regenerate_api_key',
+				nonce: bioLinkAdmin.nonce
+			}, function(resp) {
+				$btn.prop('disabled', false);
+				if (resp.success) {
+					$btn.closest('td').find('input').val(resp.data.key);
+					alert('New API key generated. Copy it to your middle server.');
+				}
+			});
+		});
 	});
 
 })(jQuery);
