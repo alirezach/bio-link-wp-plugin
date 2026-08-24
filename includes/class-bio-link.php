@@ -29,6 +29,12 @@ class Bio_Link {
 		add_action( 'init', array( $this, 'register_shortcodes' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_public_assets' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
+
+		// Initialize sub-modules
+		new Bio_Link_Admin();
+		new Bio_Link_REST_API();
+		new Bio_Link_Middle_Server();
+		new Bio_Link_DM_Automation();
 	}
 
 	public function activate() {
