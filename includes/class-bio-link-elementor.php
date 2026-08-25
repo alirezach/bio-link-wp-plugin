@@ -34,19 +34,22 @@ class Bio_Link_Elementor {
 	}
 
 	public function register_widget( $widgets_manager ) {
-		if ( method_exists( $widgets_manager, 'register' ) ) {
+		if ( class_exists( 'Bio_Link_Elementor_Widget' ) && method_exists( $widgets_manager, 'register' ) ) {
 			$widgets_manager->register( new Bio_Link_Elementor_Widget() );
 		}
 	}
 
 	public function register_widget_legacy( $widgets_manager ) {
-		if ( method_exists( $widgets_manager, 'register_widget_type' ) ) {
+		if ( class_exists( 'Bio_Link_Elementor_Widget' ) && method_exists( $widgets_manager, 'register_widget_type' ) ) {
 			$widgets_manager->register_widget_type( new Bio_Link_Elementor_Widget() );
 		}
 	}
 }
 
-class Bio_Link_Elementor_Widget extends \Elementor\Widget_Base {
+// The widget class extends Elementor's base — only define it when Elementor is
+// actually loaded. Without this guard, PHP fatals on sites without Elementor.
+if ( class_exists( '\Elementor\Plugin' ) || did_action( 'elementor/loaded' ) ) {
+	class Bio_Link_Elementor_Widget extends \Elementor\Widget_Base {
 
 	public function get_name() {
 		return 'bio_link_insta';
@@ -419,3 +422,4 @@ class Bio_Link_Elementor_Widget extends \Elementor\Widget_Base {
 		echo '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 	}
 }
+} // end guard: class_exists( '\Elementor\Plugin' )
