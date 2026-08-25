@@ -20,6 +20,14 @@ $middle_server = new Bio_Link_Middle_Server();
 		<?php if ( $bio_text ) : ?>
 			<p class="bio-link-bio"><?php echo esc_html( $bio_text ); ?></p>
 		<?php endif; ?>
+		<?php if ( $show_followers && $followers > 0 ) : ?>
+			<p class="bio-link-followers">
+				<span class="bio-link-followers-icon" aria-hidden="true">👥</span>
+				<span class="bio-link-followers-count"><?php echo esc_html( number_format_i18n( $followers ) ); ?></span>
+				<span class="bio-link-followers-label"><?php esc_html_e( 'followers', 'bio-link' ); ?></span>
+			</p>
+		<?php endif; ?>
+		<?php echo Bio_Link_Frontend::render_social_links( $social_links ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- icons are hardcoded, urls escaped inside. ?>
 	</div>
 
 	<div class="bio-link-grid">

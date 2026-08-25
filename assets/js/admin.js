@@ -13,50 +13,94 @@
 			disconnected: 'Disconnected ✗'
 		};
 
-		// Dashboard: Import from Instagram
+		// Dashboard: Import from Instagram — browser-side fetch
+		// (The WP host often has no outbound internet; the admin's BROWSER
+		// calls the middle server, then POSTs the result to WP REST.)
 		$('#bio_link_import_btn').on('click', function(e) {
 			e.preventDefault();
-			var username = $('#bio_link_ig_username').val().trim();
+			var username = $('#bio_link_ig_username').val().trim().replace(/^@/, '');
 			if (!username) {
 				alert('Please enter an Instagram username first.');
 				return;
 			}
 
-			var useMiddle = $('#bio_link_use_middle').is(':checked');
+			var serverUrl = bioLinkAdmin.serverUrl || '';
 			var $btn = $(this);
 			var $status = $('#bio_link_import_status');
 			var $preview = $('#bio_link_import_preview');
-			
+
 			$btn.prop('disabled', true);
 			$status.text(i18n.fetching);
 			$preview.html('');
 
-			$.post(bioLinkAdmin.ajaxUrl, {
-				action: 'bio_link_fetch_profile',
-				nonce: bioLinkAdmin.nonce,
-				username: username,
-				use_middle: useMiddle ? 1 : 0
-			}, function(resp) {
+			if (!serverUrl) {
 				$btn.prop('disabled', false);
-				if (resp.success) {
-					$status.html('✓ ' + resp.data.message);
-					// Show preview thumbnails
-					var html = '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">';
-					$.each(resp.data.photos, function(i, photo) {
-						html += '<div style="text-align:center;width:80px;">' +
-							'<img src="' + photo.thumbnail + '" style="width:80px;height:80px;object-fit:cover;border-radius:4px;" />' +
-							'<br><small>' + (photo.caption ? photo.caption.substring(0, 15) + '...' : photo.shortcode.substring(0, 15)) + '</small>' +
-							'</div>';
-					});
-					html += '</div>';
-					$preview.html(html);
+				$status.text('✗ ' + i18n.no_server);
+				return;
+			}
+
+			var base = serverUrl.replace(/\/+$/, '');
+			var fetchUrl = base + '/api/v1/fetch-profile?username=' +
+				encodeURIComponent(username) + '&count=15&token=' +
+				encodeURIComponent(bioLinkAdmin.igToken || '');
+
+			fetch(fetchUrl, {
+				headers: {
+					'X-BioLink-Site': bioLinkAdmin.siteId,
+					'X-BioLink-Key': bioLinkAdmin.apiKey
+				}
+			})
+			.then(function(r) {
+				if (!r.ok) throw new Error('Middle server HTTP ' + r.status);
+				return r.json();
+			})
+			.then(function(data) {
+				if (!data.ok || !data.photos || !data.photos.length) {
+					throw new Error(data.error || 'no_photos_found');
+				}
+				var followers = data.followers || 0;
+
+				// Show preview thumbnails
+				var html = '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">';
+				$.each(data.photos, function(i, photo) {
+					html += '<div style="text-align:center;width:80px;">' +
+						'<img src="' + (photo.thumbnail || photo.image_url) + '" style="width:80px;height:80px;object-fit:cover;border-radius:4px;" />' +
+						'<br><small>' + ((photo.caption || photo.shortcode).substring(0, 15)) + '</small></div>';
+				});
+				html += '</div>';
+				$preview.html(html);
+
+				// Import into WordPress via REST
+				return fetch(bioLinkAdmin.restUrl + '/import', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'X-WP-Nonce': bioLinkAdmin.restNonce
+					},
+					body: JSON.stringify({
+						username: username,
+						followers: followers,
+						photos: data.photos
+					})
+				});
+			})
+			.then(function(r) {
+				if (!r.ok) throw new Error('Import HTTP ' + r.status);
+				return r.json();
+			})
+			.then(function(importResp) {
+				$btn.prop('disabled', false);
+				if (importResp.ok) {
+					var followersTxt = importResp.followers ? ' · 👥 ' + importResp.followers.toLocaleString() : '';
+					$status.html('<span style="color:green;">✓</span> ' + importResp.message + followersTxt);
 					setTimeout(function() { location.reload(); }, 2000);
 				} else {
-					$status.text('✗ ' + (resp.data && resp.data.message ? resp.data.message : i18n.fetch_failed));
+					$status.text('✗ ' + (importResp.message || i18n.fetch_failed));
 				}
-			}).fail(function() {
+			})
+			.catch(function(err) {
 				$btn.prop('disabled', false);
-				$status.text('✗ ' + i18n.fetch_failed);
+				$status.text('✗ ' + err.message + ' — check middle server URL / CORS.');
 			});
 		});
 

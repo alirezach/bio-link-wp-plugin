@@ -60,8 +60,40 @@ if ( ! defined( 'ABSPATH' ) ) {
 					<input type="password" name="bio_link_ig_token" id="bio_link_ig_token" value="<?php echo esc_attr( get_option( 'bio_link_ig_token', '' ) ); ?>" class="regular-text" />
 					<button type="button" class="button" id="bio_link_check_graph"><?php _e( 'Check Connection', 'bio-link' ); ?></button>
 					<p class="description">
-						<?php _e( 'Required for DM automation.', 'bio-link' ); ?>
+						<?php _e( 'Required only for DM automation. Photo import works without it.', 'bio-link' ); ?>
 						<a href="#" class="graph-api-help"><?php _e( 'How to get a Graph API token?', 'bio-link' ); ?></a>
+					</p>
+				</td>
+			</tr>
+		</table>
+
+		<h2><?php _e( 'Display', 'bio-link' ); ?></h2>
+		<table class="form-table">
+			<tr>
+				<th scope="row"><?php _e( 'Followers', 'bio-link' ); ?></th>
+				<td>
+					<label>
+						<input type="checkbox" name="bio_link_show_followers" value="1" <?php checked( get_option( 'bio_link_show_followers', 1 ), '1' ); ?> />
+						<?php _e( 'Show follower count in the bio template', 'bio-link' ); ?>
+					</label>
+					<p class="description">
+						<?php
+						$followers = intval( get_option( 'bio_link_followers', 0 ) );
+						if ( $followers > 0 ) {
+							printf( __( 'Last fetched: %s followers', 'bio-link' ), number_format_i18n( $followers ) );
+						} else {
+							_e( 'No follower count stored yet — import from Instagram to fetch it.', 'bio-link' );
+						}
+						?>
+					</p>
+				</td>
+			</tr>
+			<tr>
+				<th scope="row"><?php _e( 'Social Links', 'bio-link' ); ?></th>
+				<td>
+					<textarea name="bio_link_social_links" rows="4" class="large-text code" placeholder='[{"platform":"telegram","url":"https://t.me/username"},{"platform":"x","url":"https://x.com/username"}]'><?php echo esc_textarea( get_option( 'bio_link_social_links', '' ) ); ?></textarea>
+					<p class="description">
+						<?php _e( 'JSON array of social links (used by the shortcode/theme). Platforms: telegram, x, linkedin, instagram, whatsapp, bluesky, custom. The Elementor widget manages its own links visually.', 'bio-link' ); ?>
 					</p>
 				</td>
 			</tr>

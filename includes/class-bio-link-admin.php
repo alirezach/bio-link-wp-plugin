@@ -90,6 +90,8 @@ class Bio_Link_Admin {
 		register_setting( 'bio_link_settings', 'bio_link_ig_token' );
 		register_setting( 'bio_link_settings', 'bio_link_ig_username' );
 		register_setting( 'bio_link_settings', 'bio_link_debug_enabled' );
+		register_setting( 'bio_link_settings', 'bio_link_show_followers' );
+		register_setting( 'bio_link_settings', 'bio_link_social_links' );
 	}
 
 	public function save_settings_callback( $option, $old_value, $new_value ) {
@@ -273,6 +275,11 @@ class Bio_Link_Admin {
 		wp_localize_script( 'bio-link-admin', 'bioLinkAdmin', array(
 			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
 			'nonce'   => wp_create_nonce( 'bio_link_admin_nonce' ),
+			'restUrl' => esc_url_raw( rest_url( 'bio-link/v1' ) ),
+			'restNonce' => wp_create_nonce( 'wp_rest' ),
+			'siteId'  => md5( home_url() ),
+			'apiKey'  => get_option( 'bio_link_api_key', '' ),
+			'igToken' => get_option( 'bio_link_ig_token', '' ),
 			'serverUrl' => get_option( 'bio_link_middle_server_url', '' ),
 			'i18n'    => array(
 				'fetching'      => __( 'Fetching...', 'bio-link' ),
@@ -280,6 +287,7 @@ class Bio_Link_Admin {
 				'checking'        => __( 'Checking...', 'bio-link' ),
 				'connected'       => __( 'Connected ✓', 'bio-link' ),
 				'disconnected'    => __( 'Disconnected ✗', 'bio-link' ),
+				'no_server'       => __( 'Middle server not configured. Set it in Settings.', 'bio-link' ),
 			),
 		));
 	}

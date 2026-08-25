@@ -57,6 +57,9 @@ class Bio_Link {
 			'bio_link_ig_token'         => '',
 			'bio_link_ig_username'      => '',
 			'bio_link_debug_enabled'    => 1,
+			'bio_link_show_followers'   => 1,
+			'bio_link_social_links'     => '',
+			'bio_link_followers'        => 0,
 		);
 
 		foreach ( $defaults as $key => $value ) {

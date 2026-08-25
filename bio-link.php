@@ -3,7 +3,7 @@
  * Plugin Name: Bio Link
  * Plugin URI: https://github.com/alirezach/bio-link-wp-plugin
  * Description: Instagram-style bio-link page with photo grid, color/BW, DM automation, and auto-import
- * Version: 1.1.0
+ * Version: 1.4.0
  * Author: Hermes Swarm
  * Text Domain: bio-link
  * Domain Path: /languages
@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'BIO_LINK_VERSION', '1.1.0' );
+define( 'BIO_LINK_VERSION', '1.4.0' );
 define( 'BIO_LINK_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BIO_LINK_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'BIO_LINK_TEXT_DOMAIN', 'bio-link' );
@@ -32,6 +32,8 @@ add_action( 'plugins_loaded', function() {
 	require_once __DIR__ . '/includes/class-bio-link-rest-api.php';
 	require_once __DIR__ . '/includes/class-bio-link-middle-server.php';
 	require_once __DIR__ . '/includes/class-bio-link-dm-automation.php';
+	require_once __DIR__ . '/includes/class-bio-link-elementor.php';
 
 	Bio_Link::instance();
+	new Bio_Link_Elementor();
 } );
