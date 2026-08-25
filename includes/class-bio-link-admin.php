@@ -642,6 +642,7 @@ class Bio_Link_Admin {
 		$url  = add_query_arg( array(
 			'username' => $username,
 			'count'    => $count,
+			'token'    => get_option( 'bio_link_ig_token', '' ),
 		), $base . '/api/v1/fetch-profile' );
 
 		Bio_Link_Logger::log( 'info', "Fetching via middle server: {$url}" );
